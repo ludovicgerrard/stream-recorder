@@ -1,6 +1,5 @@
 let selectedIndex = null;
 let timerInterval = null;
-let timerOffset = 0;
 
 const list = document.getElementById("video-list");
 const btnScan = document.getElementById("btn-scan");
@@ -23,7 +22,6 @@ function formatTime(ms) {
 }
 
 function startTimer(fromMs = 0) {
-  timerOffset = fromMs;
   const base = Date.now() - fromMs;
   recTimer.style.display = "block";
   clearInterval(timerInterval);
@@ -51,53 +49,68 @@ function setRecordingUI(isRecording) {
   btnStop.disabled = !isRecording;
 }
 
-function saveState(obj) {
-  chrome.storage.session.set({ recState: obj });
+/* ── per-tab state helpers ── */
+async function getAllRecordings() {
+  const data = await chrome.storage.session.get("recordings");
+  return data?.recordings || {};
 }
 
-function clearState() {
-  chrome.storage.session.remove("recState");
+async function getTabRecording(tabId) {
+  const all = await getAllRecordings();
+  return all[tabId] || null;
 }
 
-/* ── restore state when popup reopens ── */
-chrome.storage.session.get("recState", (data) => {
-  const state = data?.recState;
-  if (state?.recording) {
-    setRecordingUI(true);
-    selectedIndex = state.selectedIndex ?? null;
-    const elapsed = state.startedAt ? Date.now() - state.startedAt : 0;
-    startTimer(elapsed);
-    setStatus("Recording…", "ok");
+async function saveTabRecording(tabId, state) {
+  const all = await getAllRecordings();
+  all[tabId] = state;
+  await chrome.storage.session.set({ recordings: all });
+}
 
-    /* verify the recorder is actually still alive in the page */
-    getCurrentTab().then((tab) => {
-      chrome.scripting
-        .executeScript({
-          target: { tabId: tab.id },
-          func: () =>
-            !!(
-              window.__streamRecorder &&
-              window.__streamRecorder.state === "recording"
-            ),
-        })
-        .then((results) => {
-          if (!results?.[0]?.result) {
-            /* recorder died (e.g. tab navigated) — reset */
-            clearState();
-            setRecordingUI(false);
-            stopTimer();
-            setStatus("Recording stopped unexpectedly", "err");
-          }
-        })
-        .catch(() => {
-          clearState();
-          setRecordingUI(false);
-          stopTimer();
-          setStatus("Cannot reach page", "err");
-        });
-    });
+async function clearTabRecording(tabId) {
+  const all = await getAllRecordings();
+  delete all[tabId];
+  await chrome.storage.session.set({ recordings: all });
+}
+
+/* ── restore UI when popup opens ── */
+async function restoreState() {
+  const tab = await getCurrentTab();
+  const state = await getTabRecording(tab.id);
+
+  if (!state?.recording) {
+    setRecordingUI(false);
+    return;
   }
-});
+
+  /* verify recorder is still alive in this tab */
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () =>
+        !!(
+          window.__streamRecorder &&
+          window.__streamRecorder.state === "recording"
+        ),
+    });
+
+    if (results?.[0]?.result) {
+      selectedIndex = state.selectedIndex ?? null;
+      setRecordingUI(true);
+      startTimer(state.startedAt ? Date.now() - state.startedAt : 0);
+      setStatus("Recording…", "ok");
+    } else {
+      await clearTabRecording(tab.id);
+      setRecordingUI(false);
+      setStatus("Recording stopped unexpectedly", "err");
+    }
+  } catch (e) {
+    await clearTabRecording(tab.id);
+    setRecordingUI(false);
+    setStatus("Cannot reach page", "err");
+  }
+}
+
+restoreState();
 
 /* ── scan page for videos ── */
 btnScan.addEventListener("click", async () => {
@@ -112,8 +125,8 @@ btnScan.addEventListener("click", async () => {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => {
-        return Array.from(document.querySelectorAll("video")).map((v, i) => ({
+      func: () =>
+        Array.from(document.querySelectorAll("video")).map((v, i) => ({
           index: i,
           src: v.src || v.currentSrc || "",
           duration: v.duration,
@@ -121,8 +134,7 @@ btnScan.addEventListener("click", async () => {
           width: v.videoWidth,
           height: v.videoHeight,
           readyState: v.readyState,
-        }));
-      },
+        })),
     });
     videos = results[0].result || [];
   } catch (e) {
@@ -199,7 +211,14 @@ btnRecord.addEventListener("click", async () => {
   setRecordingUI(true);
   const startedAt = Date.now();
   startTimer(0);
-  saveState({ recording: true, selectedIndex, startedAt, tabId: tab.id });
+
+  /* save state keyed to THIS tab's id */
+  await saveTabRecording(tab.id, {
+    recording: true,
+    selectedIndex,
+    startedAt,
+    tabId: tab.id,
+  });
 
   try {
     await chrome.scripting.executeScript({
@@ -264,7 +283,7 @@ btnRecord.addEventListener("click", async () => {
     setStatus("Recording…", "ok");
   } catch (e) {
     setStatus("Error: " + e.message, "err");
-    clearState();
+    await clearTabRecording(tab.id);
     setRecordingUI(false);
     stopTimer();
   }
@@ -272,12 +291,16 @@ btnRecord.addEventListener("click", async () => {
 
 /* ── stop recording ── */
 btnStop.addEventListener("click", async () => {
-  const tab = await getCurrentTab();
+  /* always stop on the tab that owns the recording, not necessarily the current tab */
+  const currentTab = await getCurrentTab();
+  const state = await getTabRecording(currentTab.id);
+  const targetTabId = state?.tabId || currentTab.id;
+
   setStatus("Saving file…", "info");
 
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: targetTabId },
       func: () => {
         window.__streamRecorder?.stop();
       },
@@ -287,7 +310,7 @@ btnStop.addEventListener("click", async () => {
     setStatus("Error stopping: " + e.message, "err");
   }
 
-  clearState();
+  await clearTabRecording(targetTabId);
   setRecordingUI(false);
   stopTimer();
 });
