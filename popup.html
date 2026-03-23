@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Stream Recorder</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f;
+      color: #f0f0f0;
+    }
+
+    .header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 16px;
+      border-bottom: 1px solid #222;
+    }
+    .header .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #444; flex-shrink: 0;
+    }
+    .header .dot.recording { background: #e53; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+    .header span { font-size: 11px; color: #666; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+    .section { padding: 14px 16px; border-bottom: 1px solid #1a1a1a; }
+    .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #555; margin-bottom: 10px; }
+
+    /* Video list */
+    .video-list { display: flex; flex-direction: column; gap: 6px; }
+    .video-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 7px;
+      background: #1a1a1a; border: 1px solid #2a2a2a;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .video-item:hover { border-color: #444; }
+    .video-item.selected { border-color: #e53; background: #1f1010; }
+    .video-item .vi-icon {
+      width: 28px; height: 20px; border-radius: 3px;
+      background: #2a2a2a; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .video-item .vi-icon svg { width: 12px; height: 12px; }
+    .video-item .vi-info { flex: 1; min-width: 0; }
+    .video-item .vi-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .video-item .vi-meta { font-size: 10px; color: #666; margin-top: 1px; }
+    .video-item .vi-badge {
+      font-size: 9px; padding: 2px 5px; border-radius: 3px;
+      background: #1d3a1d; color: #4caf50; flex-shrink: 0;
+    }
+    .video-item .vi-badge.live { background: #3a1d1d; color: #e57373; }
+
+    .empty {
+      text-align: center; padding: 20px 0;
+      font-size: 12px; color: #444;
+    }
+    .empty svg { margin-bottom: 8px; opacity: 0.3; }
+
+    /* Settings */
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .setting-row:last-child { margin-bottom: 0; }
+    .setting-label { font-size: 12px; color: #aaa; }
+    select {
+      background: #1a1a1a; color: #f0f0f0;
+      border: 1px solid #333; border-radius: 5px;
+      padding: 4px 8px; font-size: 12px; cursor: pointer;
+    }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 8px; padding: 14px 16px; }
+    .btn {
+      flex: 1; padding: 9px; border-radius: 7px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      border: none; transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+    .btn-scan { background: #222; color: #f0f0f0; border: 1px solid #333; }
+    .btn-scan:hover:not(:disabled) { background: #2a2a2a; }
+    .btn-record { background: #e53; color: #fff; }
+    .btn-record:hover:not(:disabled) { background: #f44; }
+    .btn-stop { background: #333; color: #f0f0f0; border: 1px solid #444; }
+    .btn-stop:hover:not(:disabled) { background: #3a3a3a; }
+
+    /* Status bar */
+    .statusbar {
+      padding: 8px 16px 12px;
+      font-size: 11px; color: #555; text-align: center;
+      min-height: 30px;
+    }
+    .statusbar.ok  { color: #4caf50; }
+    .statusbar.err { color: #e57373; }
+    .statusbar.info { color: #64b5f6; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="dot" id="rec-dot"></div>
+  <h1>Stream Recorder</h1>
+  <span id="rec-timer" style="display:none">00:00</span>
+</div>
+
+<div class="section">
+  <div class="section-title">Videos on this page</div>
+  <div class="video-list" id="video-list">
+    <div class="empty">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" display="block" style="margin:0 auto 6px">
+        <rect x="2" y="7" width="15" height="10" rx="2"/><path d="M17 9.5l5-3v11l-5-3V9.5z"/>
+      </svg>
+      Click "Scan" to detect videos
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Settings</div>
+  <div class="setting-row">
+    <span class="setting-label">Format</span>
+    <select id="fmt">
+      <option value="video/webm;codecs=vp9,opus">WebM (VP9)</option>
+      <option value="video/webm;codecs=vp8,opus">WebM (VP8)</option>
+      <option value="video/webm">WebM (auto)</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <span class="setting-label">Quality</span>
+    <select id="quality">
+      <option value="8000000">High (8 Mbps)</option>
+      <option value="4000000" selected>Medium (4 Mbps)</option>
+      <option value="1500000">Low (1.5 Mbps)</option>
+    </select>
+  </div>
+</div>
+
+<div class="btn-row">
+  <button class="btn btn-scan" id="btn-scan">Scan page</button>
+  <button class="btn btn-record" id="btn-record" disabled>● Record</button>
+  <button class="btn btn-stop" id="btn-stop" disabled>■ Stop</button>
+</div>
+
+<div class="statusbar" id="status">Select a video source above</div>
+
+<script src="src/popup.js"></script>
+</body>
+</html>

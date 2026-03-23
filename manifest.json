@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Stream Recorder",
+  "version": "1.0.0",
+  "description": "Record any streaming video playing in your browser",
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon":  "icons/icon48.png",
+    "default_title": "Stream Recorder"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/recorder.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
